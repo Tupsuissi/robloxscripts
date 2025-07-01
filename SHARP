@@ -1,0 +1,272 @@
+-- SETTINGS
+local AIM_PART = "Head"
+local MIN_FOV = 30
+local MAX_FOV = 500
+local FOV_RADIUS = 200 -- initial value
+local MOUSE_SNAP_THRESHOLD = 40
+local FOV_CIRCLE_COLOR = Color3.fromRGB(255, 0, 0)
+
+-- SERVICES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local Camera = Workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- STATE
+local lockedTarget = nil
+local lastMousePosition = UserInputService:GetMouseLocation()
+local shiftHeld = false
+local teamCheckEnabled = true
+
+-- Create chams folder (for highlight boxes on heads)
+local chamsFolder = Instance.new("Folder")
+chamsFolder.Name = "HeadChams"
+chamsFolder.Parent = game:GetService("CoreGui")
+
+-- ======= GUI ======== --
+
+local CoreGui = game:GetService("CoreGui")
+
+-- FOV Circle GUI
+local fovGui = Instance.new("ScreenGui")
+fovGui.Name = "FOV_GUI"
+fovGui.Parent = CoreGui
+fovGui.ResetOnSpawn = false
+
+local fovCircle = Instance.new("Frame")
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, FOV_RADIUS * 2, 0, FOV_RADIUS * 2)
+fovCircle.BackgroundTransparency = 1
+fovCircle.Parent = fovGui
+
+local circleStroke = Instance.new("UIStroke")
+circleStroke.Thickness = 3
+circleStroke.Color = FOV_CIRCLE_COLOR
+circleStroke.Transparency = 0.5
+circleStroke.Parent = fovCircle
+
+local fovCircleCorner = Instance.new("UICorner")
+fovCircleCorner.CornerRadius = UDim.new(1, 0)
+fovCircleCorner.Parent = fovCircle
+
+-- Menu GUI
+local menuGui = Instance.new("ScreenGui")
+menuGui.Name = "AimAssistMenu"
+menuGui.Parent = CoreGui
+menuGui.ResetOnSpawn = false
+
+local menuFrame = Instance.new("Frame")
+menuFrame.Size = UDim2.new(0, 220, 0, 140)
+menuFrame.Position = UDim2.new(0, 50, 0, 50)
+menuFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+menuFrame.BorderSizePixel = 0
+menuFrame.Parent = menuGui
+menuFrame.Active = true
+menuFrame.Draggable = true
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 0, 25)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.TextScaled = true
+titleLabel.Text = "Aim Assist Settings"
+titleLabel.Parent = menuFrame
+
+-- Team Check Toggle
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 180, 0, 30)
+toggleButton.Position = UDim2.new(0, 20, 0, 35)
+toggleButton.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
+toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleButton.Font = Enum.Font.SourceSans
+toggleButton.TextScaled = true
+toggleButton.Text = "Team Check: ON"
+toggleButton.Parent = menuFrame
+
+toggleButton.MouseButton1Click:Connect(function()
+	teamCheckEnabled = not teamCheckEnabled
+	toggleButton.Text = "Team Check: " .. (teamCheckEnabled and "ON" or "OFF")
+end)
+
+-- FOV Label
+local fovLabel = Instance.new("TextLabel")
+fovLabel.Size = UDim2.new(0, 180, 0, 25)
+fovLabel.Position = UDim2.new(0, 20, 0, 75)
+fovLabel.BackgroundTransparency = 1
+fovLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovLabel.Font = Enum.Font.SourceSans
+fovLabel.TextScaled = true
+fovLabel.Text = "FOV: " .. FOV_RADIUS .. " px"
+fovLabel.Parent = menuFrame
+
+-- Slider
+local sliderFrame = Instance.new("TextButton")
+sliderFrame.Size = UDim2.new(0, 180, 0, 20)
+sliderFrame.Position = UDim2.new(0, 20, 0, 105)
+sliderFrame.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+sliderFrame.AutoButtonColor = false
+sliderFrame.Parent = menuFrame
+
+local sliderBar = Instance.new("Frame")
+sliderBar.Size = UDim2.new((FOV_RADIUS - MIN_FOV) / (MAX_FOV - MIN_FOV), 0, 1, 0)
+sliderBar.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+sliderBar.Parent = sliderFrame
+
+local dragging = false
+
+sliderFrame.MouseButton1Down:Connect(function()
+	dragging = true
+	menuFrame.Draggable = false
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if dragging then
+			dragging = false
+			menuFrame.Draggable = true
+		end
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local mouseX = input.Position.X
+		local sliderPos = sliderFrame.AbsolutePosition.X
+		local sliderSize = sliderFrame.AbsoluteSize.X
+
+		local relativeX = math.clamp(mouseX - sliderPos, 0, sliderSize)
+		local proportion = relativeX / sliderSize
+		FOV_RADIUS = MIN_FOV + proportion * (MAX_FOV - MIN_FOV)
+
+		sliderBar.Size = UDim2.new(proportion, 0, 1, 0)
+		fovLabel.Text = "FOV: " .. math.floor(FOV_RADIUS) .. " px"
+		fovCircle.Size = UDim2.new(0, FOV_RADIUS * 2, 0, FOV_RADIUS * 2)
+	end
+end)
+
+-- ===== Functions =====
+
+local function createCham(targetPart)
+	local cham = Instance.new("BoxHandleAdornment")
+	cham.Name = "HeadCham"
+	cham.Adornee = targetPart
+	cham.Size = Vector3.new(0.9, 0.9, 0.9)
+	cham.AlwaysOnTop = true
+	cham.ZIndex = 10
+	cham.Color3 = Color3.fromRGB(255, 0, 0)
+	cham.Transparency = 0.1
+	cham.Parent = chamsFolder
+end
+
+local function removeAllChams()
+	for _, child in ipairs(chamsFolder:GetChildren()) do
+		child:Destroy()
+	end
+end
+
+local function updateChams()
+	removeAllChams()
+	for _, player in pairs(Players:GetPlayers()) do
+		local valid = player ~= LocalPlayer
+		if teamCheckEnabled then
+			valid = valid and player.Team ~= LocalPlayer.Team
+		end
+		if valid 
+   and player.Character 
+   and player.Character:FindFirstChild(AIM_PART)
+   and not player.Character:FindFirstChildWhichIsA("ForceField") then
+			createCham(player.Character[AIM_PART])
+		end
+	end
+end
+
+local function isPartVisible(part)
+	local screenPoint, onScreen = Camera:WorldToViewportPoint(part.Position)
+	if not onScreen then return false end
+
+	local rayOrigin = Camera.CFrame.Position
+	local direction = (part.Position - rayOrigin).Unit * (part.Position - rayOrigin).Magnitude
+
+	local params = RaycastParams.new()
+	params.FilterDescendantsInstances = {LocalPlayer.Character}
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+
+	local result = Workspace:Raycast(rayOrigin, direction, params)
+	return result and result.Instance:IsDescendantOf(part.Parent)
+end
+
+local function getBestVisibleTarget(ignoreTarget)
+	local closest = nil
+	local closestDist = FOV_RADIUS
+
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+	for _, player in pairs(Players:GetPlayers()) do
+		local valid = player ~= LocalPlayer
+		if teamCheckEnabled then
+			valid = valid and player.Team ~= LocalPlayer.Team
+		end
+		if valid 
+   and player.Character 
+   and player.Character:FindFirstChild(AIM_PART)
+   and not player.Character:FindFirstChildWhichIsA("ForceField") then
+			local part = player.Character[AIM_PART]
+			if isPartVisible(part) and part ~= ignoreTarget then
+				local screenPos = Camera:WorldToViewportPoint(part.Position)
+				local screenPos2d = Vector2.new(screenPos.X, screenPos.Y)
+				local distance = (screenCenter - screenPos2d).Magnitude
+
+				if distance <= closestDist then
+					closest = part
+					closestDist = distance
+				end
+			end
+		end
+	end
+
+	return closest
+end
+
+UserInputService.InputBegan:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.LeftShift then
+		shiftHeld = true
+		lockedTarget = nil
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.KeyCode == Enum.KeyCode.LeftShift then
+		shiftHeld = false
+	end
+end)
+
+-- MAIN LOOP
+RunService.RenderStepped:Connect(function()
+	updateChams()
+
+	local currentMousePosition = UserInputService:GetMouseLocation()
+	local mouseDelta = (currentMousePosition - lastMousePosition).Magnitude
+	lastMousePosition = currentMousePosition
+
+	if not shiftHeld then
+		if mouseDelta > MOUSE_SNAP_THRESHOLD then
+			local newTarget = getBestVisibleTarget(lockedTarget)
+			if newTarget then
+				lockedTarget = newTarget
+			end
+		end
+
+		if not lockedTarget or not lockedTarget:IsDescendantOf(workspace) or not isPartVisible(lockedTarget) then
+			lockedTarget = getBestVisibleTarget()
+		end
+
+		if lockedTarget then
+			Camera.CFrame = CFrame.new(Camera.CFrame.Position, lockedTarget.Position)
+		end
+	end
+end)
